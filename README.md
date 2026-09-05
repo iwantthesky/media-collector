@@ -1,5 +1,19 @@
 # Media Collector v0.4.1
 
+**Geliştirme sürümü — Chrome Web Store yayını değildir.**
+
+[Chrome ZIP indir](https://github.com/iwantthesky/media-collector/raw/refs/heads/main/downloads/Media-Collector-v0.4.1-chrome.zip) · [Kaynak ZIP indir](https://github.com/iwantthesky/media-collector/raw/refs/heads/main/downloads/Media-Collector-v0.4.1-source.zip)
+
+## Hızlı kurulum
+
+1. Chrome ZIP dosyasını indirip kalıcı bir klasöre çıkar.
+2. Chrome adres çubuğuna `chrome://extensions` yaz.
+3. **Geliştirici modu** seçeneğini aç.
+4. **Paketlenmemiş öğe yükle** ile `manifest.json` içeren klasörü seç.
+5. Kullanacağın sayfayı yenile, uzantıyı aç.
+
+Uzantı HTTP/HTTPS sitelerine geniş erişim ister. Ağ yakalama varsayılan kapalıdır. Yalnızca gerekli haklara ve izinlere sahip olduğun içeriklerde kullan. Canlı site ve ses testleri devam ediyor; her sitede çalışması garanti edilmez.
+
 Web sayfalarında görsel/video seçme ve dosyaları düzenli klasörlere kaydetme üzerine geliştirilen Chrome MV3 prototipi.
 
 ## Kurulum
@@ -30,3 +44,4 @@ npm run verify
 9 otomatik test ve JavaScript sözdizimi kontrolleri geçti. Sayfadan seçim, gerçek dosya indirme ve ses için güncel sürümün canlı kontrolleri devam ediyor. Ayrıntılar VALIDATION.md dosyasında.
 
 Paylaşım için v0.4.1 source ZIP kullan. Önceki sürümler farklı özellikler içerir. LinkedIn taslağı LINKEDIN_POST_TR.md dosyasındadır. Kaynak MIT lisanslıdır.
+

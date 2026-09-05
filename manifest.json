@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "Media Collector",
+  "version": "0.4.1",
+  "description": "Web sayfalarında medya tarama, tıklayarak seçim ve düzenli klasörlere kaydetme araçları.",
+  "minimum_chrome_version": "109",
+  "permissions": [
+    "downloads",
+    "scripting",
+    "storage",
+    "tabs",
+    "webRequest",
+    "declarativeNetRequest",
+    "offscreen"
+  ],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "action": {
+    "default_title": "Media Collector",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA7JC9WX6HohdEtmklIxA2dLO0D7Jms4R7AxP4jvkiKhVHMX5mzYEItk37IPc+b1kkX5ZoXkVA7JoOFigipZRsHPYXqJVAi65W5XI0uKZM8DEftFSZgH2toinnxxdRhOb4Enz4trhRWcDCQMkNt2H2npW2MN5iN9x0PWdCQb+ZLQa/gbtBYyZI9enu+G/olxnwVKicW/5gu3rqq4yC1FBPlIwL0lDv/eOmU3J7zruh1IfK41ynDm7JCbbvDQpJsOYeAVfLar0ir22LzTS8EP3pLHbdQ7b/IOGFbMfh5cbGDWzOU1ZZTYGZ76gr63hMViRH4ie8Qh56Kit0s02FVM0HFwIDAQAB"
+}

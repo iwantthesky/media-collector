@@ -1,0 +1,10 @@
+.DS_Store
+Thumbs.db
+*.crx
+*.pem
+dist/
+coverage/
+native-helper/bin/
+native-helper/*.local.json
+native-helper/launch.cmd
+*.part

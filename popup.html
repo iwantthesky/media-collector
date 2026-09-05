@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Media Collector</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="hero">
+        <img src="icons/icon48.png" width="42" height="42" alt="">
+        <div class="hero-copy">
+          <p class="eyebrow">MEDIA COLLECTOR</p>
+          <h1>Web medyanı düzenle</h1>
+          <p id="pageState" class="page-state">Sayfa bekleniyor</p>
+        </div>
+        <span id="pinCount" class="count" aria-label="Bulunan medya sayısı">0</span>
+      </header>
+
+      <button id="pickBtn" class="button-secondary wide" type="button">Sayfadan tıklayarak seç</button>
+      <section class="panel primary-panel" aria-labelledby="currentPageTitle">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">AKTİF SEKME</p>
+            <h2 id="currentPageTitle">Sayfadaki medyayı bul</h2>
+          </div>
+        </div>
+
+        <label class="field">
+          <span>Klasör adı</span>
+          <input id="boardName" type="text" placeholder="Sayfadan otomatik algılanır">
+        </label>
+
+        <div class="actions">
+          <button id="scanBtn" type="button">Hızlı tara</button>
+          <button id="videoBtn" type="button">Videoları tara</button>
+          <button id="scrollBtn" type="button">Kaydır + tara</button>
+        </div>
+        <button id="downloadBtn" class="button-primary wide" type="button" disabled>Bulunanları indir</button>
+      </section>
+
+      <details class="panel">
+        <summary>
+          <span>
+            <strong>Yakalanan video akışları</strong>
+            <small>Oynatılan MP4 ve HLS istekleri</small>
+          </span>
+          <span class="summary-mark" aria-hidden="true">+</span>
+        </summary>
+        <div class="details-body">
+          <p class="capture-disclosure">
+            Başlattığında yalnızca bu sekmedeki medya isteklerinin adresleri cihazında tutulur; sekme kapanınca silinir.
+          </p>
+          <button id="captureToggleBtn" type="button" class="wide">Bu sekmede yakalamayı başlat</button>
+          <div class="captured-head">
+            <span>Videoyu birkaç saniye oynat, sonra listeyi yenile.</span>
+            <button id="refreshCapturedBtn" type="button" class="mini">Yenile</button>
+          </div>
+          <div id="capturedList" class="captured-list">
+            <p class="captured-empty">Henüz video isteği yakalanmadı.</p>
+          </div>
+        </div>
+      </details>
+
+
+      <details class="panel">
+        <summary>
+          <span>
+            <strong>Doğrudan medya adresleri</strong>
+            <small>JPG, PNG, GIF, MP4, WebM, MOV ve M4V</small>
+          </span>
+          <span class="summary-mark" aria-hidden="true">+</span>
+        </summary>
+        <div class="details-body">
+          <label class="field">
+            <span>Medya adresleri</span>
+            <textarea id="mediaUrls" rows="4" placeholder="Her satıra bir http/https medya adresi"></textarea>
+          </label>
+          <button id="directUrlBtn" class="wide" type="button">Adreslerdeki medyayı indir</button>
+        </div>
+      </details>
+
+      <details class="panel">
+        <summary>
+          <span>
+            <strong>Gelişmiş ayarlar</strong>
+            <small>İndirme yolu ve tarama davranışı</small>
+          </span>
+          <span class="summary-mark" aria-hidden="true">+</span>
+        </summary>
+        <div class="details-body">
+          <label class="field">
+            <span>İndirme üst klasörü</span>
+            <input id="rootFolder" type="text" value="MediaCollector">
+          </label>
+
+          <section class="grid">
+            <label class="field small">
+              <span>Kaydırma sınırı</span>
+              <input id="maxScrolls" type="number" min="1" max="1200" value="500">
+            </label>
+            <label class="field small">
+              <span>Bekleme (ms)</span>
+              <input id="scrollDelay" type="number" min="250" max="5000" step="50" value="900">
+            </label>
+          </section>
+
+          <label class="field"><span>Eşzamanlı dosya (1–6)</span><input id="downloadConcurrency" type="number" min="1" max="6" value="3"></label>
+          <p class="mode-hint">Daha fazla dosya aynı anda iner. Tek dosyanın bant genişliği sınırlanmaz; HLS 6 paralel parça kullanır.</p>
+          <label class="check">
+            <input id="tryHighRes" type="checkbox" checked>
+            <span>Önce yüksek çözünürlüklü/orijinal görseli dene</span>
+          </label>
+
+          <label class="check">
+            <input id="overwrite" type="checkbox" checked>
+            <span>Aynı dosya adı varsa üzerine yaz</span>
+          </label>
+        </div>
+      </details>
+
+      <section class="panel"><h2>Gizlilik</h2><p class="mode-hint">Adres listeleri kalıcı kaydedilmez. Yakalama yalnızca başlattığın sekmede çalışır. Geniş site erişimi bu sürümde gereklidir.</p><button id="clearPrivateBtn" type="button" class="wide">Geçici adresleri ve eski URL kayıtlarını sil</button></section>
+      <div id="status" class="status" role="status" aria-live="polite" data-tone="info">
+        Bir sayfa açıp taramayı başlat.
+      </div>
+
+      <p class="legal-note">
+        Yalnızca indirme hakkına sahip olduğun içeriklerde kullan. DRM korumalı akışlar desteklenmez.
+      </p>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>

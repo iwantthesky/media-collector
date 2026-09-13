@@ -22,7 +22,7 @@ function sessionStorageStub() {
   };
 }
 
-async function loadClassicScript(name, extras = {}) {
+async function loadClassicScript(name, extras = {}, dependencies = []) {
   const source = await readFile(new URL(name, root), "utf8");
   const context = vm.createContext({
     URL,
@@ -31,6 +31,10 @@ async function loadClassicScript(name, extras = {}) {
     clearTimeout,
     ...extras
   });
+  for (const dependency of dependencies) {
+    const dependencySource = await readFile(new URL(dependency, root), "utf8");
+    vm.runInContext(dependencySource, context, { filename: dependency });
+  }
   vm.runInContext(source, context, { filename: name });
   return context;
 }
@@ -61,6 +65,24 @@ test("popup markup contains every element used by popup.js", async () => {
   }
 });
 
+test("popup offers the complete video format selector beside click selection", async () => {
+  const html = await readFile(new URL("popup.html", root), "utf8");
+  assert.match(html, /class="pick-launch-row"[\s\S]*id="pickBtn"[\s\S]*id="outputFormat"/);
+  assert.deepEqual(
+    [...html.matchAll(/<option value="(auto|original|mp4|webm)"/g)].map((match) => match[1]),
+    ["auto", "original", "mp4", "webm"]
+  );
+  assert.match(html, /<option value="auto" selected>/);
+});
+
+test("conversion progress stays visible in the wider page toolbar", async () => {
+  const source = await readFile(new URL("contentScript.js", root), "utf8");
+  assert.match(source, /updatePickToolbar\(`%\$\{percent\} · Video/);
+  assert.match(source, /width: min\(960px, calc\(100vw - 24px\)\) !important/);
+  assert.match(source, /flex: 1 1 420px !important/);
+  assert.doesNotMatch(source, /\.pin-downloader-pick-message \{[\s\S]{0,160}max-width: 280px/);
+});
+
 test("background URL and filename helpers reject noise and sanitize paths", async () => {
   const chrome = {
     runtime: { onMessage: eventStub(), lastError: null },
@@ -68,7 +90,7 @@ test("background URL and filename helpers reject noise and sanitize paths", asyn
     tabs: { onRemoved: eventStub() },
     storage: { session: sessionStorageStub() }
   };
-  const context = await loadClassicScript("background.js", { chrome });
+  const context = await loadClassicScript("background.js", { chrome }, ["format-utils.js"]);
 
   assert.equal(context.sanitizePathPart('  A<B>:C/  ', "fallback"), "A B C");
   assert.equal(context.extensionFromUrl("https://cdn.example/image.png?x=1", "bin"), "png");
@@ -84,7 +106,7 @@ test("background URL and filename helpers reject noise and sanitize paths", asyn
 test("popup helpers validate URLs, clamp settings, and format sizes", async () => {
   const chrome = { runtime: { onMessage: eventStub() } };
   const document = { addEventListener() {} };
-  const context = await loadClassicScript("popup.js", { chrome, document });
+  const context = await loadClassicScript("popup.js", { chrome, document }, ["format-utils.js"]);
 
   assert.deepEqual(
     Array.from(context.parseMediaUrlList("https://a.example/x.mp4\nftp://bad.example/x\nhttps://a.example/x.mp4")),
@@ -116,7 +138,7 @@ test("download completion helper waits for Chrome's final state", async () => {
       }
     }
   };
-  const context = await loadClassicScript("background.js", { chrome });
+  const context = await loadClassicScript("background.js", { chrome }, ["format-utils.js"]);
   let settled = false;
   const result = context.chromeDownloadAwaitComplete({ url: "https://cdn.example/a.jpg" }, 1000)
     .then((value) => {
@@ -128,6 +150,38 @@ test("download completion helper waits for Chrome's final state", async () => {
   assert.equal(settled, false);
   changeListener({ id: 17, state: { current: "complete" } });
   assert.equal(await result, 17);
+});
+
+test("recorded blobs keep their real MP4 or WebM container extension", async () => {
+  const downloads = [];
+  const chrome = {
+    runtime: { onMessage: eventStub(), lastError: null },
+    webRequest: { onBeforeRequest: eventStub() },
+    tabs: { onRemoved: eventStub() },
+    storage: { session: sessionStorageStub() },
+    downloads: {
+      download(options, callback) { downloads.push(options); callback(downloads.length); },
+      search(query, callback) { callback([{ id: query.id, state: "complete" }]); },
+      onChanged: eventStub()
+    }
+  };
+  const context = await loadClassicScript("background.js", { chrome }, ["format-utils.js"]);
+
+  await context.downloadRecordedBlob({
+    url: "blob:https://example.test/one",
+    filename: "clip.mp4",
+    mimeType: "video/mp4;codecs=avc1",
+    options: { outputFormat: "mp4" }
+  });
+  await context.downloadRecordedBlob({
+    url: "blob:https://example.test/two",
+    filename: "clip.webm",
+    mimeType: "video/webm;codecs=vp9",
+    options: { outputFormat: "webm" }
+  });
+
+  assert.match(downloads[0].filename, /\.mp4$/);
+  assert.match(downloads[1].filename, /\.webm$/);
 });
 
 test("network capture listener is opt-in and removed after opt-out", async () => {
@@ -145,7 +199,7 @@ test("network capture listener is opt-in and removed after opt-out", async () =>
       }
     }
   };
-  const context = await loadClassicScript("background.js", { chrome });
+  const context = await loadClassicScript("background.js", { chrome }, ["format-utils.js"]);
 
   assert.equal(beforeRequest.hasListener(context.handleMediaRequest), false);
   assert.equal(await context.setCaptureEnabled(9, true), true);
@@ -159,7 +213,7 @@ test("network capture listener is opt-in and removed after opt-out", async () =>
 test("unsupported pages stay disabled after a busy operation", async () => {
   const chrome = { runtime: { onMessage: eventStub() } };
   const document = { addEventListener() {} };
-  const context = await loadClassicScript("popup.js", { chrome, document });
+  const context = await loadClassicScript("popup.js", { chrome, document }, ["format-utils.js"]);
   const disabledState = vm.runInContext(`
     Object.assign(elements, {
       scanBtn: {}, videoBtn: {}, scrollBtn: {}, pickBtn: {}, captureToggleBtn: {}, refreshCapturedBtn: {},

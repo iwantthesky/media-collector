@@ -1,3 +1,8 @@
+if (typeof importScripts === "function") {
+  importScripts("format-utils.js");
+}
+
+const formatTools = globalThis.MediaCollectorFormat;
 const DOWNLOAD_MESSAGE = "PIN_DOWNLOADER_DOWNLOAD";
 const DIRECT_URLS_MESSAGE = "PIN_DOWNLOADER_DIRECT_URLS";
 const RECORDED_BLOB_MESSAGE = "PIN_DOWNLOADER_DOWNLOAD_RECORDED_BLOB";
@@ -31,11 +36,20 @@ async function downloadRecordedBlob(message) {
   }
 
   const options = message.options || {};
+  const requestedFormat = formatTools.normalizeOutputFormat(options.outputFormat);
+  const recordedFormat = formatTools.mediaFormatFromMimeType(message.mimeType) ||
+    formatTools.mediaFormatFromUrl(message.filename);
+  if (!/^(mp4|webm)$/.test(recordedFormat)) {
+    throw new Error("Kaydedilen videonun gercek bicimi belirlenemedi.");
+  }
+  if ((requestedFormat === "mp4" || requestedFormat === "webm") && recordedFormat !== requestedFormat) {
+    throw new Error(`Istenen ${requestedFormat.toUpperCase()} bicimi tarayicida olusturulamadi.`);
+  }
   const rootFolder = sanitizePathPart(options.rootFolder || "MediaCollector", "MediaCollector");
   const boardName = sanitizePathPart(message.boardName || options.boardName || "Selected Videos", "Selected Videos");
   const baseName = shortPathPart(message.filename || "selected-video.webm", "selected-video.webm", 100)
     .replace(/\.(webm|mp4)$/i, "");
-  const filename = `${rootFolder}/${boardName}/${baseName}.webm`;
+  const filename = `${rootFolder}/${boardName}/${baseName}.${recordedFormat}`;
 
   await chromeDownloadAwaitComplete({
     url,
@@ -120,6 +134,7 @@ async function downloadPinsForBoard({ pins, boardName, options }) {
   const safeBoardName = sanitizePathPart(boardName || safeOptions.boardName || "Media", "Media");
   const conflictAction = safeOptions.overwrite ? "overwrite" : "uniquify";
   const tryHighRes = Boolean(safeOptions.tryHighRes);
+  const outputFormat = formatTools.normalizeOutputFormat(safeOptions.outputFormat);
 
   let downloaded = 0;
   let failed = 0;
@@ -127,50 +142,49 @@ async function downloadPinsForBoard({ pins, boardName, options }) {
 
   await runDownloadPool(safePins, safeOptions.downloadConcurrency, async (pin, index) => {
 
-    const url = await chooseDownloadUrl(pin, tryHighRes);
+    const urls = await chooseDownloadUrls(pin, tryHighRes, outputFormat);
 
-    if (!url) {
+    if (urls.length === 0) {
       failed += 1;
       failures.push({
         index,
         pin,
         url: "",
-        reason: "No downloadable image URL found."
+        reason: outputFormat === "mp4" || outputFormat === "webm"
+          ? `No direct ${outputFormat.toUpperCase()} candidate found.`
+          : "No downloadable media URL found."
       });
       sendDownloadProgress(downloaded, failed, safePins.length);
       return;
     }
 
-    const filename = buildDownloadFilename({
-      rootFolder,
-      boardName: safeBoardName,
-      pin,
-      url,
-      index
+    const attempt = await downloadFirstAvailable(urls, async (url) => {
+      const filename = buildDownloadFilename({
+        rootFolder,
+        boardName: safeBoardName,
+        pin,
+        url,
+        index
+      });
+      await chromeDownloadAwaitComplete({ url, filename, conflictAction, saveAs: false });
     });
 
-    try {
-      await chromeDownloadAwaitComplete({
-        url,
-        filename,
-        conflictAction,
-        saveAs: false
-      });
+    if (attempt.ok) {
       downloaded += 1;
-    } catch (error) {
+    } else {
       failed += 1;
       failures.push({
         index,
         pin,
-        url,
-        reason: error && error.message ? error.message : "Download failed."
+        url: attempt.url || "",
+        reason: attempt.error && attempt.error.message ? attempt.error.message : "All download candidates failed."
       });
     }
 
     sendDownloadProgress(downloaded, failed, safePins.length);
   });
 
-  if (failures.length > 0) {
+  if (failures.length > 0 && !safeOptions.suppressFailureReport) {
     await saveFailureReport({
       rootFolder,
       boardName: safeBoardName,
@@ -181,18 +195,37 @@ async function downloadPinsForBoard({ pins, boardName, options }) {
   return { downloaded, failed, total: safePins.length };
 }
 
-async function chooseDownloadUrl(pin, tryHighRes) {
-  const candidates = normalizeCandidates(pin);
-  if (candidates.length === 0) {
-    return "";
+async function downloadFirstAvailable(urls, downloadOne) {
+  let lastError = null;
+  let lastUrl = "";
+  for (const url of Array.isArray(urls) ? urls : []) {
+    lastUrl = url;
+    try {
+      await downloadOne(url);
+      return { ok: true, url, error: null };
+    } catch (error) {
+      lastError = error;
+    }
   }
+  return { ok: false, url: lastUrl, error: lastError };
+}
 
-  if (!tryHighRes) {
-    return candidates[0].url;
+async function chooseDownloadUrls(pin, tryHighRes, outputFormat = "auto") {
+  const candidates = normalizeCandidates(pin, outputFormat);
+  if (candidates.length === 0) {
+    return [];
   }
 
   if (isVideoUrl(candidates[0].url)) {
-    return candidates[0].url;
+    const normalizedOutput = formatTools.normalizeOutputFormat(outputFormat);
+    const directCandidates = (normalizedOutput === "mp4" || normalizedOutput === "webm")
+      ? candidates.filter((candidate) => formatTools.mediaFormatFromUrl(candidate.url) === normalizedOutput)
+      : candidates;
+    return unique(directCandidates.map((candidate) => candidate.url));
+  }
+
+  if (!tryHighRes) {
+    return [candidates[0].url];
   }
 
   const generated = [];
@@ -202,14 +235,19 @@ async function chooseDownloadUrl(pin, tryHighRes) {
 
   for (const rawUrl of unique(generated)) {
     if (await imageExists(rawUrl)) {
-      return rawUrl;
+      return [rawUrl];
     }
   }
 
-  return candidates[0].url;
+  return [candidates[0].url];
 }
 
-function normalizeCandidates(pin) {
+async function chooseDownloadUrl(pin, tryHighRes, outputFormat = "auto") {
+  const urls = await chooseDownloadUrls(pin, tryHighRes, outputFormat);
+  return urls[0] || "";
+}
+
+function normalizeCandidates(pin, outputFormat = "auto") {
   const rawCandidates = Array.isArray(pin && pin.candidates) ? pin.candidates : [];
   const candidates = rawCandidates
     .filter((candidate) => candidate && typeof candidate.url === "string")
@@ -234,7 +272,10 @@ function normalizeCandidates(pin) {
     }
   }
 
-  return Array.from(byUrl.values()).sort((a, b) => b.score - a.score);
+  const sorted = Array.from(byUrl.values()).sort((a, b) => b.score - a.score);
+  return sorted.some((candidate) => isVideoUrl(candidate.url))
+    ? formatTools.orderVideoCandidates(sorted, outputFormat)
+    : sorted;
 }
 
 function buildHighResolutionCandidates(rawUrl) {
@@ -490,7 +531,7 @@ async function ensureContentScript(tabId) {
   } catch {
     await chromeScriptingExecuteScript({
       target: { tabId },
-      files: ["contentScript.js"]
+      files: ["format-utils.js", "contentScript.js"]
     });
     await chromeTabsSendMessage(tabId, { type: "PIN_DOWNLOADER_PING" });
   }

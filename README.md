@@ -1,28 +1,19 @@
-# Media Collector v0.4.1
-
-**Geliştirme sürümü — Chrome Web Store yayını değildir.**
-
-[Chrome ZIP indir](https://github.com/iwantthesky/media-collector/raw/refs/heads/main/downloads/Media-Collector-v0.4.1-chrome.zip) · [Kaynak ZIP indir](https://github.com/iwantthesky/media-collector/raw/refs/heads/main/downloads/Media-Collector-v0.4.1-source.zip)
-
-## Hızlı kurulum
-
-1. Chrome ZIP dosyasını indirip kalıcı bir klasöre çıkar.
-2. Chrome adres çubuğuna `chrome://extensions` yaz.
-3. **Geliştirici modu** seçeneğini aç.
-4. **Paketlenmemiş öğe yükle** ile `manifest.json` içeren klasörü seç.
-5. Kullanacağın sayfayı yenile, uzantıyı aç.
-
-Uzantı HTTP/HTTPS sitelerine geniş erişim ister. Ağ yakalama varsayılan kapalıdır. Yalnızca gerekli haklara ve izinlere sahip olduğun içeriklerde kullan. Canlı site ve ses testleri devam ediyor; her sitede çalışması garanti edilmez.
+# Media Collector v0.5.1
 
 Web sayfalarında görsel/video seçme ve dosyaları düzenli klasörlere kaydetme üzerine geliştirilen Chrome MV3 prototipi.
 
+**Geliştirme sürümü — Chrome Web Store yayını değildir.**
+
+[Chrome ZIP indir](https://github.com/iwantthesky/media-collector/raw/refs/heads/main/downloads/Media-Collector-v0.5.1-chrome.zip) · [Kaynak ZIP indir](https://github.com/iwantthesky/media-collector/raw/refs/heads/main/downloads/Media-Collector-v0.5.1-source.zip)
+
 ## Kurulum
 
-Chrome'da chrome://extensions sayfasını aç. Geliştirici modunda Paketlenmemiş öğe yükle ile bu klasörü seç. Mevcut kurulum güncelleniyorsa Yeniden yükle düğmesine bas ve açık medya sayfalarını yenile. Yerel yardımcı kurulumu gerekmez.
+Chrome ZIP dosyasını kalıcı bir klasöre çıkar. Chrome'da chrome://extensions sayfasını aç. Geliştirici modunda Paketlenmemiş öğe yükle ile `manifest.json` içeren klasörü seç. Mevcut kurulum güncelleniyorsa Yeniden yükle düğmesine bas ve açık medya sayfalarını yenile. Yerel yardımcı kurulumu gerekmez.
 
 ## Kullanım
 
-- **Sayfadan tıklayarak seç:** Görsel ve videoları seç, sayfadaki Seçilenleri indir düğmesine bas. Esc seçimden çıkar.
+- **Sayfadan tıklayarak seç:** Yanındaki video biçimini belirle, görsel ve videoları seç, sayfadaki Seçilenleri indir düğmesine bas. Esc seçimden çıkar.
+- **Video biçimi:** Otomatik mod doğrudan MP4 adayını önce dener, sonra diğer doğrudan biçimlere geçer. Orijinal kaynak, zorunlu MP4 ve zorunlu WebM seçenekleri de vardır.
 - **Tarama:** Hızlı tara, Videoları tara veya Kaydır + tara ile sayfadaki öğeleri bul.
 - **Doğrudan adres:** Medya dosyası adresi gir. Normal web sayfası adresleri dosya bağlantısı değildir.
 - **Yakalama:** Varsayılan kapalıdır; yalnızca kullanıcının başlattığı sekmede geçici medya adresleri tutulur.
@@ -33,7 +24,7 @@ Siteye özel arayüz bölümleri, pano listesi modu ve YouTube yerel indirme yar
 
 ## Sınırlar
 
-Her sitede çalışması garanti edilmez. Blob video fallback'i oynatıcıdan gerçek zamanlı WebM kaydıdır; ses ve kayıt sayfanın izinlerine bağlıdır. Ayrı sesli HLS ve DASH birleştirme tamamlanmış değildir. DRM aşma desteği yoktur. Yalnızca gerekli kullanım haklarına ve izinlere sahip olduğun içeriklerde kullan.
+Her sitede çalışması garanti edilmez. Doğrudan hedef biçim bulunamadığında MP4/WebM dönüşümü, seçilen oynatıcı akışının MediaRecorder ile gerçek zamanda yeniden kodlanmasıdır; yalnızca uzantı değiştirilmez. Kullanılabilir kapsayıcı ve ses desteği Chrome/işletim sistemi yeteneklerine ve sayfanın izinlerine bağlıdır. Ayrı sesli HLS ve DASH birleştirme tamamlanmış değildir. DRM aşma desteği yoktur. Yalnızca gerekli kullanım haklarına ve izinlere sahip olduğun içeriklerde kullan.
 
 Arayüz adlarını kaldırmak hukuki uygunluk veya mağaza onayı sağlamaz. Ürün henüz Chrome Web Store onayı almamıştır. Yayın öncesi PUBLISHING.md dosyasını incele.
 
@@ -41,7 +32,6 @@ Arayüz adlarını kaldırmak hukuki uygunluk veya mağaza onayı sağlamaz. Ür
 
 npm run verify
 
-9 otomatik test ve JavaScript sözdizimi kontrolleri geçti. Sayfadan seçim, gerçek dosya indirme ve ses için güncel sürümün canlı kontrolleri devam ediyor. Ayrıntılar VALIDATION.md dosyasında.
+20 otomatik test ve JavaScript sözdizimi kontrolleri geçti. Sayfadan seçim, gerçek dosya indirme ve sesli MP4/WebM dönüşümü için canlı Chrome kontrolü ayrıca gereklidir. Ayrıntılar VALIDATION.md dosyasında.
 
-Paylaşım için v0.4.1 source ZIP kullan. Önceki sürümler farklı özellikler içerir. LinkedIn taslağı LINKEDIN_POST_TR.md dosyasındadır. Kaynak MIT lisanslıdır.
-
+Paylaşım için v0.5.1 source ZIP kullan. Önceki sürümler farklı özellikler içerir. LinkedIn taslağı LINKEDIN_POST_TR.md dosyasındadır. Kaynak MIT lisanslıdır.

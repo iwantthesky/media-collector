@@ -18,7 +18,19 @@
         <span id="pinCount" class="count" aria-label="Bulunan medya sayısı">0</span>
       </header>
 
-      <button id="pickBtn" class="button-secondary wide" type="button">Sayfadan tıklayarak seç</button>
+      <div class="pick-launch-row">
+        <button id="pickBtn" class="button-secondary" type="button">Sayfadan tıklayarak seç</button>
+        <label class="format-picker" for="outputFormat">
+          <span>Video biçimi</span>
+          <select id="outputFormat">
+            <option value="auto" selected>Otomatik · MP4 önce</option>
+            <option value="original">Orijinal</option>
+            <option value="mp4">MP4'e dönüştür</option>
+            <option value="webm">WebM'e dönüştür</option>
+          </select>
+        </label>
+      </div>
+      <p class="format-hint">Otomatik mod doğrudan MP4'ü, ardından diğer kaynak biçimlerini dener.</p>
       <section class="panel primary-panel" aria-labelledby="currentPageTitle">
         <div class="section-heading">
           <div>
@@ -129,6 +141,7 @@
         Yalnızca indirme hakkına sahip olduğun içeriklerde kullan. DRM korumalı akışlar desteklenmez.
       </p>
     </main>
+    <script src="format-utils.js"></script>
     <script src="popup.js"></script>
   </body>
 </html>

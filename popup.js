@@ -59,6 +59,7 @@ function cacheElements() {
     "scrollDelay",
     "tryHighRes",
     "overwrite",
+    "outputFormat",
     "mediaUrls",
     "scanBtn",
     "videoBtn",
@@ -78,6 +79,7 @@ function cacheElements() {
 function bindEvents() {
   elements.clearPrivateBtn.addEventListener('click', clearPrivateData);
   elements.downloadConcurrency.addEventListener('change', saveSettings);
+  elements.outputFormat.addEventListener("change", saveSettings);
   elements.scanBtn.addEventListener("click", () => runScan(false));
   elements.videoBtn.addEventListener("click", scanVideos);
   elements.scrollBtn.addEventListener("click", () => runScan(true));
@@ -296,7 +298,8 @@ function currentOptions() {
     scrollDelay: numberValue(elements.scrollDelay, 900, 250, 5000),
     stopAfterNoGrowth: 24,
     tryHighRes: elements.tryHighRes.checked,
-    overwrite: elements.overwrite.checked
+    overwrite: elements.overwrite.checked,
+    outputFormat: MediaCollectorFormat.normalizeOutputFormat(elements.outputFormat.value)
   };
 }
 
@@ -315,7 +318,7 @@ async function ensureContentScript(tabId) {
   } catch {
     await chromeScriptingExecuteScript({
       target: { tabId },
-      files: ["contentScript.js"]
+      files: ["format-utils.js", "contentScript.js"]
     });
     await sendToTab(tabId, { type: "PIN_DOWNLOADER_PING" });
   }
@@ -358,6 +361,7 @@ function saveSettings() {
     scrollDelay: elements.scrollDelay.value,
     tryHighRes: elements.tryHighRes.checked,
     overwrite: elements.overwrite.checked,
+    outputFormat: MediaCollectorFormat.normalizeOutputFormat(elements.outputFormat.value),
     downloadConcurrency: elements.downloadConcurrency.value
   });
 }
@@ -371,6 +375,7 @@ function restoreSettings() {
       scrollDelay: "900",
       tryHighRes: true,
       overwrite: true,
+      outputFormat: "auto",
       downloadConcurrency: "3"
     },
     (items) => {
@@ -379,6 +384,7 @@ function restoreSettings() {
       elements.scrollDelay.value = items.scrollDelay;
       elements.tryHighRes.checked = Boolean(items.tryHighRes);
       elements.overwrite.checked = Boolean(items.overwrite);
+      elements.outputFormat.value = MediaCollectorFormat.normalizeOutputFormat(items.outputFormat);
       elements.downloadConcurrency.value = items.downloadConcurrency;
     }
   );
@@ -754,4 +760,3 @@ async function clearPrivateData() {
     setStatus('Geçici adresler silindi; tüm sekmelerde yakalama kapatıldı. İndirilen dosyalar ve Chrome indirme geçmişi tarayıcıdan yönetilir.');
   } catch { setStatus('Hata: Geçici veriler silinemedi.'); }
 }
-

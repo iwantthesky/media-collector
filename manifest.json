@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Media Collector",
-  "version": "0.4.1",
+  "version": "0.5.1",
   "description": "Web sayfalarında medya tarama, tıklayarak seçim ve düzenli klasörlere kaydetme araçları.",
   "minimum_chrome_version": "109",
   "permissions": [

@@ -1,11 +1,12 @@
-# v0.4.1 doğrulama
+# v0.5.1 doğrulama
 
-6 Eylül 2026
+14 Eylül 2026
 
-- Popup, content script, background ve offscreen JavaScript sözdizimi kontrolleri geçti.
-- 9 otomatik test geçti: manifest/dosya bütünlüğü, popup alanları, URL/yol yardımcıları, Chrome tamamlanma takibi, açık onaylı yakalama, desteklenmeyen sayfalar, paralellik sınırı ve desteklenmeyen sayfa/fragment adreslerinin reddi.
-- Site bölümleri ve yerel indirme modülü kaldırıldı; tıklayarak genel görsel/video seçimi korundu.
+- Format yardımcıları, popup, content script, background ve offscreen JavaScript sözdizimi kontrolleri geçti.
+- 20 otomatik test geçti. Yeni kontroller format normalizasyonu, MP4 önceliği, kararlı aday sırası, gerçek dönüşüm kararı, Orijinal modda sessiz yeniden kodlamanın engellenmesi, MIME zinciri, ilk aday başarısız olduğunda sonraki adaya geçişi ve dönüşüm yüzdesinin geniş durum çubuğunda görünür kalmasını kapsıyor.
+- Otomatik, Orijinal, MP4 ve WebM seçimleri popup ayarından seçim moduna aktarılıyor.
+- Zorunlu dönüşümde dosya uzantısı MediaRecorder'ın gerçek MIME türüne göre belirleniyor.
 
-Güncel sürümün gerçek Chrome seçim/indirme/ses kontrolü tamamlanmadı. Önceki YouTube motoru testi bu sürümün doğrulaması olarak kullanılmaz. Mağaza onayı veya hukuki inceleme yapılmış değildir.
+Güncel sürümün gerçek Chrome seçim/indirme/sesli MP4-WebM dönüşüm kontrolü tamamlanmadan yayın hazır sayılmaz. Önceki YouTube motoru testi bu sürümün doğrulaması olarak kullanılmaz. Mağaza onayı veya hukuki inceleme yapılmış değildir.
 
-Tarayıcı önizlemesinde tek arayüz ve etkin tıklayarak seçim düğmesi doğrulandı. Bu önizleme sahte Chrome API'si kullanır; gerçek indirme testi değildir.
+Tarayıcı önizlemesi yalnız arayüz yerleşimini doğrular; gerçek indirme/dönüşüm testi değildir.

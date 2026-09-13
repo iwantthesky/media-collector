@@ -9,8 +9,8 @@ function Write-Package([string]$destination, [bool]$chromeOnly) {
   try {
     Get-ChildItem -LiteralPath $sourceRoot -Recurse -File -Force | ForEach-Object {
       $relative = $_.FullName.Substring($sourceRoot.Length + 1).Replace('\','/')
-      $private = $relative -match '(^|/)(bin|node_modules|\.git)/|\.local\.json$|(^|/)launch\.cmd$|\.part$'
-      $runtime = $relative -match '^(manifest\.json|background\.js|contentScript\.js|offscreen\.(html|js)|popup\.(html|css|js)|PRIVACY\.md|README\.md|LICENSE|icons/[^/]+\.png)$'
+      $private = $relative -match '(^|/)(bin|downloads|node_modules|\.git)/|\.local\.json$|(^|/)launch\.cmd$|\.part$'
+      $runtime = $relative -match '^(manifest\.json|background\.js|contentScript\.js|format-utils\.js|offscreen\.(html|js)|popup\.(html|css|js)|PRIVACY\.md|README\.md|LICENSE|icons/[^/]+\.png)$'
       if (-not $private -and (-not $chromeOnly -or $runtime)) {
         $entry = $zip.CreateEntry($relative, [IO.Compression.CompressionLevel]::Optimal)
         $entryStream = $entry.Open()

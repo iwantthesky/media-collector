@@ -1,11 +1,11 @@
 {
   "name": "media-collector-extension",
-  "version": "0.4.1",
+  "version": "0.5.1",
   "private": true,
   "description": "Local-first Chrome MV3 media utility.",
   "scripts": {
-    "lint": "node --check popup.js && node --check contentScript.js && node --check background.js && node --check offscreen.js",
-    "test": "node tests/extension.test.mjs && node tests/downloads.test.mjs",
+    "lint": "node --check format-utils.js && node --check popup.js && node --check contentScript.js && node --check background.js && node --check offscreen.js",
+    "test": "node tests/format.test.mjs && node tests/extension.test.mjs && node tests/downloads.test.mjs",
     "verify": "npm run lint && npm test"
   },
   "engines": {

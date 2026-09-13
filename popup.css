@@ -218,6 +218,7 @@ details[open] .summary-mark {
 
 .field input:focus,
 .field textarea:focus,
+select:focus,
 button:focus-visible,
 summary:focus-visible {
   border-color: var(--accent);
@@ -250,6 +251,40 @@ summary:focus-visible {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 7px;
+}
+
+.pick-launch-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(142px, 1fr);
+  gap: 8px;
+  align-items: stretch;
+}
+
+.pick-launch-row > button {
+  min-height: 54px;
+}
+
+.format-picker {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.format-picker select {
+  min-height: 35px;
+  padding: 7px 8px;
+  font-size: 11px;
+}
+
+.format-hint {
+  margin: -5px 2px 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.35;
 }
 
 button {

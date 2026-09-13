@@ -1,4 +1,5 @@
 (() => {
+  const formatTools = globalThis.MediaCollectorFormat;
   const KNOWN_IMAGE_HOST = "pinimg.com";
   const PROGRESS_MESSAGE = "PIN_DOWNLOADER_PROGRESS";
   const PICK_STYLE_ID = "pin-downloader-pick-style";
@@ -374,10 +375,13 @@
     // Do not let the poster image represent a clicked video. Pinterest often
     // places an <img> poster over the player; downloading that candidate made
     // the picker appear to support only images.
-    const candidates = mergeCandidates(
-      extractVideoCandidates(video),
-      extractPinVideoCandidates(video, pinId)
-    ).filter((candidate) => isVideoUrl(candidate.url));
+    const candidates = formatTools.orderVideoCandidates(
+      mergeCandidates(
+        extractVideoCandidates(video),
+        extractPinVideoCandidates(video, pinId)
+      ).filter((candidate) => isVideoUrl(candidate.url)),
+      pickState.active ? pickState.options.outputFormat : "auto"
+    );
 
     const allowStandaloneLargeImage = Boolean(options.allowStandaloneLargeImage);
     const bounds = video.getBoundingClientRect();
@@ -895,6 +899,7 @@
     pickState.active = true;
     pickState.options = {
       ...(options || {}),
+      outputFormat: formatTools.normalizeOutputFormat(options && options.outputFormat),
       boardName: incomingBoardName || detectBoardName() || "Selected Pins"
     };
 
@@ -908,7 +913,7 @@
     document.addEventListener("dblclick", blockPickInteraction, true);
     document.addEventListener("auxclick", blockPickInteraction, true);
     document.addEventListener("keydown", handlePickKeydown, true);
-    updatePickToolbar(pickState.options.videoOnly ? "Videolara tıkla; ardından Seçilenleri indir. Blob videolar gerçek zamanda kaydedilir." : "Görsel veya videoya tıklayarak seç.");
+    updatePickToolbar(pickState.options.videoOnly ? "Videolara tıkla; ardından Seçilenleri indir. Blob videolar gerçek zamanda dönüştürülür." : "Görsel veya videoya tıklayarak seç.");
   }
 
   function exitPickMode() {
@@ -1077,6 +1082,7 @@
     toolbar.id = PICK_TOOLBAR_ID;
     toolbar.innerHTML = [
       '<span class="pin-downloader-pick-count">0 secili</span>',
+      '<span class="pin-downloader-pick-format"></span>',
       '<span class="pin-downloader-pick-message">Gorsel veya videoya tiklayarak sec.</span>',
       '<button type="button" data-pin-downloader-action="download">Secilenleri indir</button>',
       '<button type="button" data-pin-downloader-action="clear">Temizle</button>',
@@ -1146,6 +1152,7 @@
     let failed = 0;
     let finalMessage = "";
     const directPins = [];
+    const outputFormat = formatTools.normalizeOutputFormat(pickState.options.outputFormat);
 
     try {
       for (let index = 0; index < pins.length; index += 1) {
@@ -1155,18 +1162,49 @@
           continue;
         }
 
+        const candidates = formatTools.orderVideoCandidates([
+          ...(Array.isArray(pin.candidates) ? pin.candidates : []),
+          ...(pin.url ? [{ url: pin.url, score: pin.score || 0 }] : [])
+        ], outputFormat);
+        const preparedPin = {
+          ...pin,
+          url: candidates[0] ? candidates[0].url : "",
+          score: candidates[0] ? candidates[0].score : pin.score,
+          candidates
+        };
+        const videoAction = formatTools.selectedVideoAction(preparedPin.url, outputFormat);
+
+        if (videoAction === "direct") {
+          if (outputFormat !== "mp4" && outputFormat !== "webm") {
+            directPins.push(preparedPin);
+            continue;
+          }
+
+          const directResponse = await sendPickedPinsToBackground([preparedPin], { suppressFailureReport: true });
+          if ((Number(directResponse.downloaded) || 0) > 0) {
+            downloaded += 1;
+            continue;
+          }
+        }
+
+        if (videoAction === "fail") {
+          failed += 1;
+          updatePickToolbar("Orijinal video adresi bulunamadi; yeniden kodlama yapilmadi.");
+          continue;
+        }
+
         const video = pickState.selectedElements.get(pin.id);
         try {
-          await recordPickedVideo(video, pin, index + 1, pins.length);
+          await recordPickedVideo(video, preparedPin, index + 1, pins.length, outputFormat);
           downloaded += 1;
         } catch (error) {
           // A real direct URL is still preferable to losing the selection
           // completely when captureStream is blocked by the page.
-          if (pin.url) {
-            directPins.push(pin);
+          if ((outputFormat === "auto" || outputFormat === "original") && preparedPin.url) {
+            directPins.push(preparedPin);
           } else {
             failed += 1;
-            updatePickToolbar(`Video kaydi basarisiz: ${error && error.message ? error.message : error}`);
+            updatePickToolbar(`Video donusumu basarisiz: ${error && error.message ? error.message : error}`);
           }
         }
       }
@@ -1186,13 +1224,13 @@
     }
   }
 
-  function sendPickedPinsToBackground(pins) {
+  function sendPickedPinsToBackground(pins, optionOverrides = {}) {
     return new Promise((resolve, reject) => {
       chrome.runtime.sendMessage({
         type: "PIN_DOWNLOADER_DOWNLOAD",
         boardName: pickState.options.boardName || detectBoardName() || "Selected Pins",
         pins,
-        options: pickState.options
+        options: { ...pickState.options, ...optionOverrides }
       }, (response) => {
         const error = chrome.runtime.lastError;
         if (error) {
@@ -1208,7 +1246,7 @@
     });
   }
 
-  async function recordPickedVideo(video, pin, current, total) {
+  async function recordPickedVideo(video, pin, current, total, outputFormat) {
     if (!(video instanceof HTMLVideoElement)) {
       throw new Error("Secilen video ogesi bulunamadi.");
     }
@@ -1258,7 +1296,10 @@
         await waitForMediaEvent(video, "seeked", 8000);
       }
 
-      const mimeType = pickRecorderMimeType();
+      const mimeType = pickRecorderMimeType(outputFormat);
+      if (!mimeType && (outputFormat === "mp4" || outputFormat === "webm")) {
+        throw new Error(`${outputFormat.toUpperCase()} kaydi bu Chrome surumunde desteklenmiyor.`);
+      }
       recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
       const chunks = [];
 
@@ -1277,7 +1318,7 @@
       await video.play();
       progressTimer = setInterval(() => {
         const percent = Math.min(100, Math.round((video.currentTime / duration) * 100));
-        updatePickToolbar(`Video ${current}/${total} kaydediliyor: %${percent}`);
+        updatePickToolbar(`%${percent} · Video ${current}/${total} ${formatTools.outputFormatLabel(outputFormat)} bicimine donusturuluyor`);
       }, 500);
 
       await waitForMediaEvent(video, "ended", Math.ceil((duration + 30) * 1000));
@@ -1286,12 +1327,20 @@
       }
       await stopped;
 
-      const blob = new Blob(chunks, { type: recorder.mimeType || "video/webm" });
+      const actualMimeType = recorder.mimeType || mimeType || "video/webm";
+      const actualFormat = formatTools.mediaFormatFromMimeType(actualMimeType);
+      if (!actualFormat) {
+        throw new Error("Tarayicinin olusturdugu video bicimi belirlenemedi.");
+      }
+      if ((outputFormat === "mp4" || outputFormat === "webm") && actualFormat !== outputFormat) {
+        throw new Error(`Tarayici ${outputFormat.toUpperCase()} yerine ${actualFormat.toUpperCase()} olusturdu.`);
+      }
+      const blob = new Blob(chunks, { type: actualMimeType });
       if (blob.size === 0) {
         throw new Error("Kaydedilen video bos.");
       }
 
-      await downloadRecordedBlob(blob, pin, current);
+      await downloadRecordedBlob(blob, pin, current, actualFormat, actualMimeType);
     } finally {
       clearInterval(progressTimer);
       if (recorder && recorder.state !== "inactive") {
@@ -1319,12 +1368,8 @@
     }
   }
 
-  function pickRecorderMimeType() {
-    for (const type of [
-      "video/webm;codecs=vp9,opus",
-      "video/webm;codecs=vp8,opus",
-      "video/webm"
-    ]) {
+  function pickRecorderMimeType(outputFormat) {
+    for (const type of formatTools.recorderMimeCandidates(outputFormat)) {
       if (MediaRecorder.isTypeSupported(type)) {
         return type;
       }
@@ -1357,7 +1402,7 @@
     });
   }
 
-  async function downloadRecordedBlob(blob, pin, index) {
+  async function downloadRecordedBlob(blob, pin, index, actualFormat, mimeType) {
     const url = URL.createObjectURL(blob);
     const safeTitle = String(pin.title || `selected-video-${index}`)
       .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "-")
@@ -1370,7 +1415,8 @@
         chrome.runtime.sendMessage({
           type: "PIN_DOWNLOADER_DOWNLOAD_RECORDED_BLOB",
           url,
-          filename: `${safeTitle}.webm`,
+          filename: `${safeTitle}.${actualFormat}`,
+          mimeType,
           boardName: pickState.options.boardName || detectBoardName() || "Selected Videos",
           options: pickState.options
         }, (response) => {
@@ -1394,12 +1440,17 @@
   function updatePickToolbar(message) {
     const toolbar = ensurePickToolbar();
     const count = toolbar.querySelector(".pin-downloader-pick-count");
+    const format = toolbar.querySelector(".pin-downloader-pick-format");
     const status = toolbar.querySelector(".pin-downloader-pick-message");
     const downloadButton = toolbar.querySelector('[data-pin-downloader-action="download"]');
     const selectedCount = pickState.selectedPins.size;
 
     if (count) {
       count.textContent = `${selectedCount} secili`;
+    }
+
+    if (format) {
+      format.textContent = formatTools.outputFormatLabel(pickState.options.outputFormat);
     }
 
     if (status) {
@@ -1444,6 +1495,7 @@
         display: flex !important;
         align-items: center !important;
         gap: 8px !important;
+        width: min(960px, calc(100vw - 24px)) !important;
         max-width: calc(100vw - 24px) !important;
         padding: 9px 10px !important;
         border: 1px solid rgba(20, 24, 28, 0.18) !important;
@@ -1463,8 +1515,19 @@
         font-weight: 750 !important;
       }
 
+      #${PICK_TOOLBAR_ID} .pin-downloader-pick-format {
+        padding: 4px 7px !important;
+        border-radius: 999px !important;
+        background: #fbe8e5 !important;
+        color: #8f1020 !important;
+        font-weight: 700 !important;
+        white-space: nowrap !important;
+      }
+
       #${PICK_TOOLBAR_ID} .pin-downloader-pick-message {
-        max-width: 280px !important;
+        flex: 1 1 420px !important;
+        min-width: 0 !important;
+        max-width: none !important;
         overflow: hidden !important;
         text-overflow: ellipsis !important;
         white-space: nowrap !important;

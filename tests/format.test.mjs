@@ -63,8 +63,22 @@ test("selected-video delivery never silently transcodes Original mode", () => {
   assert.equal(format.selectedVideoAction("", "auto"), "record");
 });
 
-test("recorder candidates use only the requested container in forced modes", () => {
-  assert.ok(format.recorderMimeCandidates("mp4").every((type) => type.startsWith("video/mp4")));
+test("recorder candidates avoid corrupt Chrome MP4 recording", () => {
+  assert.ok(format.recorderMimeCandidates("mp4").length > 0);
+  assert.ok(format.recorderMimeCandidates("mp4").every((type) => type.startsWith("video/webm")));
   assert.ok(format.recorderMimeCandidates("webm").every((type) => type.startsWith("video/webm")));
-  assert.ok(format.recorderMimeCandidates("auto")[0].startsWith("video/mp4"));
+  assert.ok(format.recorderMimeCandidates("auto").every((type) => type.startsWith("video/webm")));
+});
+
+test("explicit MP4 mode tells the user about its safe WebM fallback", () => {
+  assert.match(format.outputFormatLabel("mp4"), /MP4.*WebM/);
+});
+
+test("recording bitrates preserve quality as resolution grows", () => {
+  assert.deepEqual({ ...format.recorderBitrates(540, 540) }, {
+    videoBitsPerSecond: 4_000_000,
+    audioBitsPerSecond: 192_000
+  });
+  assert.equal(format.recorderBitrates(1280, 720).videoBitsPerSecond, 8_000_000);
+  assert.equal(format.recorderBitrates(1920, 1080).videoBitsPerSecond, 12_000_000);
 });

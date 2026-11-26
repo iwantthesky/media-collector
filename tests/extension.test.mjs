@@ -86,7 +86,7 @@ test("conversion progress stays visible in the wider page toolbar", async () => 
 test("background URL and filename helpers reject noise and sanitize paths", async () => {
   const chrome = {
     runtime: { onMessage: eventStub(), lastError: null },
-    webRequest: { onBeforeRequest: eventStub() },
+    webRequest: { onBeforeRequest: eventStub(), onHeadersReceived: eventStub() },
     tabs: { onRemoved: eventStub() },
     storage: { session: sessionStorageStub() }
   };
@@ -126,7 +126,7 @@ test("download completion helper waits for Chrome's final state", async () => {
   let changeListener;
   const chrome = {
     runtime: { onMessage: eventStub(), lastError: null },
-    webRequest: { onBeforeRequest: eventStub() },
+    webRequest: { onBeforeRequest: eventStub(), onHeadersReceived: eventStub() },
     tabs: { onRemoved: eventStub() },
     storage: { session: sessionStorageStub() },
     downloads: {
@@ -152,11 +152,11 @@ test("download completion helper waits for Chrome's final state", async () => {
   assert.equal(await result, 17);
 });
 
-test("recorded blobs keep their real MP4 or WebM container extension", async () => {
+test("recorded blobs reject unsafe MP4, keep WebM, and never overwrite", async () => {
   const downloads = [];
   const chrome = {
     runtime: { onMessage: eventStub(), lastError: null },
-    webRequest: { onBeforeRequest: eventStub() },
+    webRequest: { onBeforeRequest: eventStub(), onHeadersReceived: eventStub() },
     tabs: { onRemoved: eventStub() },
     storage: { session: sessionStorageStub() },
     downloads: {
@@ -167,29 +167,69 @@ test("recorded blobs keep their real MP4 or WebM container extension", async () 
   };
   const context = await loadClassicScript("background.js", { chrome }, ["format-utils.js"]);
 
-  await context.downloadRecordedBlob({
-    url: "blob:https://example.test/one",
-    filename: "clip.mp4",
-    mimeType: "video/mp4;codecs=avc1",
-    options: { outputFormat: "mp4" }
-  });
+  await assert.rejects(
+    context.downloadRecordedBlob({
+      url: "blob:https://example.test/one",
+      filename: "clip.mp4",
+      mimeType: "video/mp4;codecs=avc1",
+      options: { outputFormat: "mp4", overwrite: true }
+    }),
+    /MP4 kaydi bozuk kare/
+  );
   await context.downloadRecordedBlob({
     url: "blob:https://example.test/two",
-    filename: "clip.webm",
+    filename: "0001_clip.webm",
     mimeType: "video/webm;codecs=vp9",
-    options: { outputFormat: "webm" }
+    options: { outputFormat: "webm", overwrite: true }
+  });
+  const fallback = await context.downloadRecordedBlob({
+    url: "blob:https://example.test/three",
+    filename: "0002_clip.webm",
+    mimeType: "video/webm;codecs=vp9",
+    options: { outputFormat: "mp4", overwrite: true }
   });
 
-  assert.match(downloads[0].filename, /\.mp4$/);
-  assert.match(downloads[1].filename, /\.webm$/);
+  assert.match(downloads[0].filename, /0001_clip\.webm$/);
+  assert.equal(downloads[0].conflictAction, "uniquify");
+  assert.match(downloads[1].filename, /0002_clip\.webm$/);
+  assert.equal(downloads[1].conflictAction, "uniquify");
+  assert.equal(fallback.usedFallback, true);
+});
+
+test("all media download paths ignore stale overwrite settings", async () => {
+  const source = await readFile(new URL("background.js", root), "utf8");
+  const popup = await readFile(new URL("popup.html", root), "utf8");
+  assert.doesNotMatch(source, /options\.overwrite|safeOptions\.overwrite/);
+  assert.doesNotMatch(popup, /id="overwrite"/);
+  assert.match(popup, /otomatik numara ekler/);
+});
+
+test("element recording uses one finalized blob and a numbered stable name", async () => {
+  const source = await readFile(new URL("contentScript.js", root), "utf8");
+  assert.match(source, /recorder\.start\(\);/);
+  assert.doesNotMatch(source, /recorder\.start\(\s*\d+/);
+  assert.match(source, /String\(index\)\.padStart\(4, "0"\)/);
+  assert.match(source, /filename: `\$\{number\}_\$\{safeTitle\}_\$\{safeId\}\.\$\{actualFormat\}`/);
+  assert.match(source, /MP4 bulunamadigi icin.*guvenli WebM/);
+});
+
+test("scroll scans use the proven legacy video collector without conversion state", async () => {
+  const source = await readFile(new URL("contentScript.js", root), "utf8");
+  assert.match(source, /for \(const video of videos\) \{\s*const pin = pinFromVideoForScan\(video, \{ allowStandaloneLargeImage: true \}\)/);
+
+  const legacyCollector = source.match(/function pinFromVideoForScan\([\s\S]+?\n  \}\n\n  function pinFromMediaElement/);
+  assert.ok(legacyCollector, "legacy scroll-scan collector is missing");
+  assert.doesNotMatch(legacyCollector[0], /formatTools|pickState|captureFromElement/);
+  assert.match(legacyCollector[0], /filter\(\(candidate\) => isVideoUrl\(candidate\.url\)\)/);
 });
 
 test("network capture listener is opt-in and removed after opt-out", async () => {
   const beforeRequest = eventStub();
+  const onHeadersReceived = eventStub();
   const stored = {};
   const chrome = {
     runtime: { onMessage: eventStub(), lastError: null },
-    webRequest: { onBeforeRequest: beforeRequest },
+    webRequest: { onBeforeRequest: beforeRequest, onHeadersReceived },
     tabs: { onRemoved: eventStub() },
     storage: {
       session: {
@@ -202,11 +242,25 @@ test("network capture listener is opt-in and removed after opt-out", async () =>
   const context = await loadClassicScript("background.js", { chrome }, ["format-utils.js"]);
 
   assert.equal(beforeRequest.hasListener(context.handleMediaRequest), false);
+  assert.equal(onHeadersReceived.hasListener(context.handlePlaylistResponse), false);
   assert.equal(await context.setCaptureEnabled(9, true), true);
   assert.equal(beforeRequest.hasListener(context.handleMediaRequest), true);
+  assert.equal(onHeadersReceived.hasListener(context.handlePlaylistResponse), true);
   assert.equal(stored.capture_enabled_9, true);
+  const details = {
+    tabId: 9, method: "GET", type: "xmlhttprequest", statusCode: 200,
+    url: "https://cdn.example/player/manifest",
+    responseHeaders: [{ name: "Content-Type", value: "Application/Vnd.Apple.Mpegurl; charset=UTF-8" }]
+  };
+  context.handlePlaylistResponse({ ...details, tabId: 42 });
+  context.handlePlaylistResponse({ ...details, url: "https://cdn.example/denied", statusCode: 403 });
+  context.handlePlaylistResponse(details);
+  assert.equal((await context.getCapturedMedia(9)).length, 1);
+  assert.equal((await context.getCapturedMedia(9))[0].kind, "hls");
+  assert.equal((await context.getCapturedMedia(42)).length, 0);
   assert.equal(await context.setCaptureEnabled(9, false), false);
   assert.equal(beforeRequest.hasListener(context.handleMediaRequest), false);
+  assert.equal(onHeadersReceived.hasListener(context.handlePlaylistResponse), false);
   assert.equal(stored.capture_enabled_9, undefined);
 });
 

@@ -58,7 +58,6 @@ function cacheElements() {
     "maxScrolls",
     "scrollDelay",
     "tryHighRes",
-    "overwrite",
     "outputFormat",
     "mediaUrls",
     "scanBtn",
@@ -89,7 +88,7 @@ function bindEvents() {
   elements.captureToggleBtn.addEventListener("click", toggleCapture);
   elements.refreshCapturedBtn.addEventListener("click", refreshCapturedMedia);
 
-  for (const id of ["rootFolder", "maxScrolls", "scrollDelay", "tryHighRes", "overwrite", "mediaUrls"]) {
+  for (const id of ["rootFolder", "maxScrolls", "scrollDelay", "tryHighRes", "mediaUrls"]) {
     elements[id].addEventListener("change", saveSettings);
     elements[id].addEventListener("input", saveSettings);
   }
@@ -298,7 +297,6 @@ function currentOptions() {
     scrollDelay: numberValue(elements.scrollDelay, 900, 250, 5000),
     stopAfterNoGrowth: 24,
     tryHighRes: elements.tryHighRes.checked,
-    overwrite: elements.overwrite.checked,
     outputFormat: MediaCollectorFormat.normalizeOutputFormat(elements.outputFormat.value)
   };
 }
@@ -360,21 +358,19 @@ function saveSettings() {
     maxScrolls: elements.maxScrolls.value,
     scrollDelay: elements.scrollDelay.value,
     tryHighRes: elements.tryHighRes.checked,
-    overwrite: elements.overwrite.checked,
     outputFormat: MediaCollectorFormat.normalizeOutputFormat(elements.outputFormat.value),
     downloadConcurrency: elements.downloadConcurrency.value
   });
 }
 
 function restoreSettings() {
-  chrome.storage.local.remove(["boardUrls", "mediaUrls"]);
+  chrome.storage.local.remove(["boardUrls", "mediaUrls", "overwrite"]);
   chrome.storage.local.get(
     {
       rootFolder: "MediaCollector",
       maxScrolls: "500",
       scrollDelay: "900",
       tryHighRes: true,
-      overwrite: true,
       outputFormat: "auto",
       downloadConcurrency: "3"
     },
@@ -383,9 +379,13 @@ function restoreSettings() {
       elements.maxScrolls.value = items.maxScrolls;
       elements.scrollDelay.value = items.scrollDelay;
       elements.tryHighRes.checked = Boolean(items.tryHighRes);
-      elements.overwrite.checked = Boolean(items.overwrite);
       elements.outputFormat.value = MediaCollectorFormat.normalizeOutputFormat(items.outputFormat);
-      elements.downloadConcurrency.value = items.downloadConcurrency;
+      const select = elements.downloadConcurrency;
+      const value = String(Math.floor(numberValue({ value: items.downloadConcurrency ?? 3 }, 3, 1, 6)));
+      if (!["1", "3", "6"].includes(value)) {
+        select.add(new Option(`Özel · ${value} eşzamanlı indirme`, value));
+      }
+      select.value = value;
     }
   );
 }

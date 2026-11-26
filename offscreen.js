@@ -5,14 +5,11 @@
 
 const HLS_PROGRESS_MESSAGE = "PIN_DOWNLOADER_HLS_PROGRESS";
 const FETCH_TIMEOUT_MS = 30000;
-const SEGMENT_CONCURRENCY = 6;
 const MAX_FETCH_ATTEMPTS = 7;
 const RETRY_BASE_DELAY_MS = 800;
 const RATE_LIMIT_DELAY_MS = 8000;
 const MAX_RETRY_DELAY_MS = 45000;
 const MAX_SEGMENTS = 20000;
-
-let rateLimitCooldownUntil = 0;
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (!message || typeof message.type !== "string") {
@@ -25,7 +22,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 
   if (message.type === "OFFSCREEN_DOWNLOAD_HLS") {
-    assembleHlsVideo(String(message.url || ""))
+    assembleHlsVideo(String(message.url || ""), message.concurrency)
       .then((result) => sendResponse(result))
       .catch((error) => {
         sendResponse({
@@ -39,15 +36,15 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   return false;
 });
 
-async function assembleHlsVideo(playlistUrl) {
+async function assembleHlsVideo(playlistUrl, concurrency = 3) {
   if (!/^https?:\/\//i.test(playlistUrl)) {
     throw new Error("Gecersiz HLS adresi.");
   }
 
   reportProgress(0, 0, "Playlist okunuyor");
 
-  let mediaUrl = playlistUrl;
-  let playlistText = await fetchText(playlistUrl);
+  const job = { controller: new AbortController(), retryAt: 0 };
+  let { url: mediaUrl, text: playlistText } = await fetchPlaylist(playlistUrl, job);
 
   // A master playlist lists quality variants instead of segments. Follow the
   // highest-bandwidth variant down to an actual media playlist.
@@ -64,27 +61,16 @@ async function assembleHlsVideo(playlistUrl) {
       const bMuxed = b.audioGroup ? 0 : 1;
       return (bMuxed - aMuxed) || (b.bandwidth - a.bandwidth);
     });
-    mediaUrl = variants[0].url;
-    playlistText = await fetchText(mediaUrl);
+    ({ url: mediaUrl, text: playlistText } = await fetchPlaylist(variants[0].url, job));
   }
 
   const playlist = parseMediaPlaylist(playlistText, mediaUrl);
 
   if (playlist.segments.length === 0) {
-    sendDiagnostic("Playlist icinde #EXTINF segmenti bulunamadi.\nIlk 18 ham satir: " +
-      JSON.stringify(playlistText.split(/\r?\n/).slice(0, 18)));
     throw new Error("HLS playlist icinde indirilecek parca bulunamadi.");
   }
   if (playlist.segments.length > MAX_SEGMENTS) {
     throw new Error(`Bu akis cok uzun (${playlist.segments.length} parca). Muhtemelen canli yayin.`);
-  }
-
-  // Test-download the first segment so the exact HTTP failure is visible before
-  // attempting all of them.
-  const probe = await probeFirstSegment(mediaUrl, playlist);
-  sendDiagnostic(probe.report);
-  if (!probe.ok) {
-    throw new Error(`İlk parça indirilemedi: HTTP ${probe.status}. Adresin süresi dolmuş veya sunucu erişimi sınırlamış olabilir.`);
   }
 
   const total = playlist.segments.length;
@@ -96,31 +82,36 @@ async function assembleHlsVideo(playlistUrl) {
 
   reportProgress(0, total, "Parcalar indiriliyor");
 
-  async function worker() {
-    while (cursor < total) {
-      const index = cursor;
-      cursor += 1;
-      buffers[index] = await fetchSegment(
-        playlist.segments[index],
-        playlist.mediaSequence + index,
-        keyCache
-      );
-      completed += 1;
-      reportProgress(completed, total, "Parcalar indiriliyor");
-    }
+  async function downloadPart(index) {
+    buffers[index] = await fetchSegment(
+      playlist.segments[index],
+      playlist.mediaSequence + index,
+      keyCache,
+      job
+    );
+    completed += 1;
+    reportProgress(completed, total, "Parcalar indiriliyor");
   }
 
-  const workers = [];
-  for (let i = 0; i < Math.min(SEGMENT_CONCURRENCY, total); i += 1) {
-    workers.push(worker());
+  // Use the first response in the output and stop early on an access refusal.
+  await downloadPart(cursor++);
+  const workers = Array.from({ length: Math.min(concurrency, total - 1) }, async () => {
+    while (cursor < total && !job.controller.signal.aborted) {
+      await downloadPart(cursor++);
+    }
+  });
+  try {
+    await Promise.all(workers);
+  } catch (error) {
+    job.controller.abort(error);
+    throw error;
   }
-  await Promise.all(workers);
 
   reportProgress(total, total, "Dosya birlestiriliyor");
 
   const parts = [];
   if (playlist.mapUrl) {
-    parts.push(new Uint8Array(await fetchBuffer(playlist.mapUrl)));
+    parts.push(new Uint8Array(await fetchBuffer(playlist.mapUrl, "", job)));
   }
   for (const buffer of buffers) {
     parts.push(new Uint8Array(buffer));
@@ -156,11 +147,11 @@ async function assembleHlsVideo(playlistUrl) {
   };
 }
 
-async function fetchSegment(segment, sequenceNumber, keyCache) {
-  let data = await fetchBuffer(segment.url, segment.byteRange);
+async function fetchSegment(segment, sequenceNumber, keyCache, job) {
+  let data = await fetchBuffer(segment.url, segment.byteRange, job);
 
   if (segment.key && /^AES-128$/i.test(segment.key.method)) {
-    data = await decryptSegment(data, segment.key, sequenceNumber, keyCache);
+    data = await decryptSegment(data, segment.key, sequenceNumber, keyCache, job);
   } else if (segment.key && segment.key.method && !/^NONE$/i.test(segment.key.method)) {
     throw new Error(`Desteklenmeyen sifreleme yontemi: ${segment.key.method}`);
   }
@@ -168,26 +159,20 @@ async function fetchSegment(segment, sequenceNumber, keyCache) {
   return data;
 }
 
-async function decryptSegment(data, key, sequenceNumber, keyCache) {
+async function decryptSegment(data, key, sequenceNumber, keyCache, job) {
   if (!key.uri) {
     throw new Error("AES-128 anahtar adresi playlist'te yok.");
   }
 
-  let cryptoKey = keyCache.get(key.uri);
-  if (!cryptoKey) {
-    const rawKey = await fetchBuffer(key.uri);
-    if (rawKey.byteLength !== 16) {
-      throw new Error("AES-128 anahtari 16 bayt degil.");
-    }
-    cryptoKey = await crypto.subtle.importKey(
-      "raw",
-      rawKey,
-      { name: "AES-CBC" },
-      false,
-      ["decrypt"]
-    );
-    keyCache.set(key.uri, cryptoKey);
+  if (!keyCache.has(key.uri)) {
+    keyCache.set(key.uri, fetchBuffer(key.uri, "", job).then(rawKey => {
+      if (rawKey.byteLength !== 16) {
+        throw new Error("AES-128 anahtari 16 bayt degil.");
+      }
+      return crypto.subtle.importKey("raw", rawKey, { name: "AES-CBC" }, false, ["decrypt"]);
+    }));
   }
+  const cryptoKey = await keyCache.get(key.uri);
 
   let iv = key.iv;
   if (!iv) {
@@ -424,196 +409,105 @@ function buildSuggestedName(playlistUrl, extension) {
   return `${base}_${stamp}.${extension}`;
 }
 
-async function probeFirstSegment(mediaUrl, playlist) {
-  const lines = [];
-  const segment = playlist.segments[0];
-
-  lines.push(`Cozulen parca sayisi: ${playlist.segments.length}`);
-  lines.push(`Sifreleme: ${segment && segment.key ? segment.key.method : "yok"}`);
-  lines.push(`Init (EXT-X-MAP): ${playlist.mapUrl || "yok"}`);
-
-  try {
-    const media = new URL(mediaUrl);
-    lines.push(`m3u8 host : ${media.hostname}`);
-    lines.push(`m3u8 path : ${media.pathname}`);
-    lines.push(`m3u8 query: ${media.search || "(yok)"}`);
-  } catch {
-    lines.push(`m3u8 adresi cozulemedi: ${mediaUrl}`);
-  }
-
-  if (!segment) {
-    return { ok: false, status: 0, report: lines.join("\n") };
-  }
-
-  try {
-    const seg = new URL(segment.url);
-    lines.push(`seg[0] host : ${seg.hostname}`);
-    lines.push(`seg[0] path : ${seg.pathname}`);
-    lines.push(`seg[0] query: ${seg.search || "(yok)"}`);
-  } catch {
-    lines.push(`seg[0] adresi cozulemedi: ${segment.url}`);
-  }
-
-  let ok = false;
-  let status = 0;
-
-  try {
-    const response = await fetch(segment.url, {
-      method: "GET",
-      credentials: "include",
-      cache: "no-store",
-      redirect: "follow"
-    });
-    status = response.status;
-    ok = response.ok || response.status === 206;
-    lines.push(`seg[0] HTTP cevabi  : ${response.status} ${response.statusText}`);
-    lines.push(`seg[0] content-type : ${response.headers.get("content-type") || "(yok)"}`);
-    lines.push(`seg[0] content-uzunluk: ${response.headers.get("content-length") || "(yok)"}`);
-
-    if (ok) {
-      lines.push("seg[0] ERISILEBILIR - tam indirme devam ediyor.");
-    } else {
-      const body = await response.text();
-      lines.push(`seg[0] hata govdesi (ilk 350): ${body.slice(0, 350).replace(/\s+/g, " ").trim()}`);
+async function fetchPlaylist(url, job) {
+  return fetchWithRetry(url, job, {}, async response => {
+    const text = (await response.text()).trimStart();
+    if (!/^#EXTM3U(?:\r?\n|$)/.test(text)) {
+      throw new Error("Sunucu geçerli bir HLS listesi döndürmedi.");
     }
-  } catch (error) {
-    lines.push(`seg[0] FETCH HATASI: ${error && error.message ? error.message : error}`);
-  }
-
-  return { ok, status, report: lines.join("\n") };
+    return { url: response.url || url, text };
+  });
 }
 
-async function fetchText(url) {
-  const response = await fetchWithRetry(url);
-  return response.text();
+async function fetchBuffer(url, byteRange, job) {
+  const headers = byteRange ? { Range: byteRange } : {};
+  return fetchWithRetry(url, job, headers, response => response.arrayBuffer());
 }
 
-async function fetchBuffer(url, byteRange) {
-  const headers = {};
-  if (byteRange) {
-    headers.Range = byteRange;
-  }
-  const response = await fetchWithRetry(url, headers);
-  return response.arrayBuffer();
-}
-
-async function fetchWithRetry(url, headers) {
-  let lastError = null;
+async function fetchWithRetry(url, job, headers, consume) {
+  const signal = job.controller.signal;
+  let lastError;
 
   for (let attempt = 0; attempt < MAX_FETCH_ATTEMPTS; attempt += 1) {
-    await waitForRateLimitCooldown();
+    while (job.retryAt > Date.now()) {
+      await sleep(job.retryAt - Date.now(), signal);
+    }
+    signal.throwIfAborted();
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    const request = new AbortController();
+    const abortRequest = () => request.abort(signal.reason);
+    signal.addEventListener("abort", abortRequest, { once: true });
+    const timer = setTimeout(() => request.abort(), FETCH_TIMEOUT_MS);
 
+    let response;
     try {
-      const response = await fetch(url, {
+      response = await fetch(url, {
         method: "GET",
         credentials: "include",
         cache: "no-store",
         redirect: "follow",
-        headers: headers || {},
-        signal: controller.signal
+        headers,
+        signal: request.signal
       });
-
-      if (!response.ok && response.status !== 206) {
-        const retryable = isRetryableStatus(response.status);
-        const retryDelay = getRetryDelay(response, attempt);
-        const body = attempt === MAX_FETCH_ATTEMPTS - 1 || !retryable
-          ? await readErrorSnippet(response)
-          : "";
-
-        lastError = new Error(
-          `HTTP ${response.status}${body ? ` - ${body}` : ""}`
-        );
-
-        if (!retryable || attempt === MAX_FETCH_ATTEMPTS - 1) {
-          break;
-        }
-
-        if (response.status === 429) {
-          extendRateLimitCooldown(retryDelay);
-        }
-
-        await sleep(retryDelay);
-        continue;
-      }
-
-      return response;
     } catch (error) {
+      signal.throwIfAborted();
       lastError = error;
-      if (attempt === MAX_FETCH_ATTEMPTS - 1) {
+    } finally {
+      if (!response?.ok) {
+        clearTimeout(timer);
+        signal.removeEventListener("abort", abortRequest);
+      }
+    }
+
+    if (response?.ok) {
+      try {
+        return await consume(response);
+      } finally {
+        clearTimeout(timer);
+        signal.removeEventListener("abort", abortRequest);
+      }
+    }
+
+    let delay = Math.min(RETRY_BASE_DELAY_MS * 2 ** attempt, MAX_RETRY_DELAY_MS);
+    if (response) {
+      void response.body?.cancel().catch(() => {});
+      const status = response.status;
+      if (status === 401 || status === 403) {
+        throw new Error("Sunucu HLS kaynağına erişimi reddetti (HTTP " + status + ").");
+      }
+      lastError = new Error("HLS kaynağı HTTP " + status + " döndürdü.");
+      if (![408, 425, 429, 500, 502, 503, 504].includes(status)) {
         break;
       }
-      await sleep(getRetryDelay(null, attempt));
-    } finally {
-      clearTimeout(timer);
+
+      const requestedDelay = parseRetryAfter(response.headers.get("retry-after"));
+      if (requestedDelay !== null && requestedDelay > MAX_RETRY_DELAY_MS) {
+        throw new Error("Sunucu " + Math.ceil(requestedDelay / 1000) + " saniye beklemeyi istedi. HLS indirmesi durduruldu (HTTP " + status + ").");
+      }
+      delay = requestedDelay ?? (status === 429 ? Math.min(RATE_LIMIT_DELAY_MS * 2 ** attempt, MAX_RETRY_DELAY_MS) : delay);
+      if (status === 429 || requestedDelay !== null) {
+        job.retryAt = Math.max(job.retryAt, Date.now() + delay);
+      }
+    }
+
+    if (attempt < MAX_FETCH_ATTEMPTS - 1) {
+      await sleep(delay, signal);
     }
   }
 
-  const reason = lastError && lastError.message ? lastError.message : String(lastError);
-  throw new Error(`Indirilemedi (${url.slice(0, 300)}): ${reason}`);
+  throw lastError || new Error("HLS kaynağı indirilemedi.");
 }
 
-async function waitForRateLimitCooldown() {
-  const delay = rateLimitCooldownUntil - Date.now();
-  if (delay > 0) {
-    await sleep(delay);
+function parseRetryAfter(value, now = Date.now()) {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (/^\d+$/.test(text)) {
+    return Number(text) * 1000;
   }
-}
-
-function extendRateLimitCooldown(delay) {
-  rateLimitCooldownUntil = Math.max(rateLimitCooldownUntil, Date.now() + delay);
-}
-
-function isRetryableStatus(status) {
-  return status === 408 ||
-    status === 425 ||
-    status === 429 ||
-    status === 500 ||
-    status === 502 ||
-    status === 503 ||
-    status === 504;
-}
-
-function getRetryDelay(response, attempt) {
-  const retryAfter = response ? parseRetryAfter(response.headers.get("retry-after")) : 0;
-  if (retryAfter > 0) {
-    return retryAfter;
+  if (!/[a-z]/i.test(text)) {
+    return null;
   }
-
-  const isRateLimited = response && response.status === 429;
-  const baseDelay = isRateLimited ? RATE_LIMIT_DELAY_MS : RETRY_BASE_DELAY_MS;
-  const delay = baseDelay * Math.pow(2, attempt);
-  const jitter = Math.floor(Math.random() * 500);
-  return Math.min(delay + jitter, MAX_RETRY_DELAY_MS);
-}
-
-function parseRetryAfter(value) {
-  if (!value) {
-    return 0;
-  }
-
-  const seconds = Number(value);
-  if (Number.isFinite(seconds)) {
-    return Math.min(Math.max(seconds * 1000, 0), MAX_RETRY_DELAY_MS);
-  }
-
-  const dateTime = Date.parse(value);
-  if (!Number.isNaN(dateTime)) {
-    return Math.min(Math.max(dateTime - Date.now(), 0), MAX_RETRY_DELAY_MS);
-  }
-
-  return 0;
-}
-
-async function readErrorSnippet(response) {
-  try {
-    const body = await response.text();
-    return body.slice(0, 220).replace(/\s+/g, " ").trim();
-  } catch {
-    return "";
-  }
+  const date = Date.parse(text);
+  return Number.isFinite(date) ? Math.max(0, date - now) : null;
 }
 
 function reportProgress(done, total, phase) {
@@ -632,8 +526,17 @@ function reportProgress(done, total, phase) {
   }
 }
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function sleep(ms, signal) {
+  signal.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const abort = () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", abort);
+      resolve();
+    }, ms);
+    signal.addEventListener("abort", abort, { once: true });
+  });
 }
-
-function sendDiagnostic() {} // Private playlist diagnostics are never broadcast.

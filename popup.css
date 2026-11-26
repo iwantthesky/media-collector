@@ -199,7 +199,8 @@ details[open] .summary-mark {
 }
 
 .field input,
-.field textarea {
+.field textarea,
+.field select {
   width: 100%;
   border: 1px solid var(--line);
   border-radius: 9px;
@@ -471,6 +472,15 @@ button:disabled {
 .mode-nav button { padding: 11px 5px; font-size: 12px; }
 .mode-nav button[aria-pressed="true"] { background: var(--navy); color: white; border-color: var(--navy); }
 .mode-hint { font-size: 12px; line-height: 1.55; color: var(--muted); margin: 7px 0; }
+.download-speed-warning {
+  padding: 8px 10px;
+  border-left: 2px solid var(--danger);
+  border-radius: 4px;
+  background: var(--accent-soft);
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.45;
+}
 
 select { width:100%; padding:9px; border:1px solid var(--line); border-radius:8px; background:white; color:var(--text); }
 section.panel { padding: 12px; }

@@ -25,12 +25,12 @@
           <select id="outputFormat">
             <option value="auto" selected>Otomatik · MP4 önce</option>
             <option value="original">Orijinal</option>
-            <option value="mp4">MP4'e dönüştür</option>
-            <option value="webm">WebM'e dönüştür</option>
+            <option value="mp4">MP4 öncelikli · WebM yedek</option>
+            <option value="webm">WebM · güvenli kayıt</option>
           </select>
         </label>
       </div>
-      <p class="format-hint">Otomatik mod doğrudan MP4'ü, ardından diğer kaynak biçimlerini dener.</p>
+      <p class="format-hint">MP4 seçimi gerçek MP4 adresini kullanır; bulunamazsa hata vermek yerine güvenli WebM kaydı yapar.</p>
       <section class="panel primary-panel" aria-labelledby="currentPageTitle">
         <div class="section-heading">
           <div>
@@ -118,17 +118,22 @@
             </label>
           </section>
 
-          <label class="field"><span>Eşzamanlı dosya (1–6)</span><input id="downloadConcurrency" type="number" min="1" max="6" value="3"></label>
-          <p class="mode-hint">Daha fazla dosya aynı anda iner. Tek dosyanın bant genişliği sınırlanmaz; HLS 6 paralel parça kullanır.</p>
+          <label class="field">
+            <span>İndirme hızı</span>
+            <select id="downloadConcurrency" aria-describedby="downloadSpeedHelp downloadSpeedWarning">
+              <option value="1">Düşük · 1 eşzamanlı indirme</option>
+              <option value="3" selected>Dengeli · 3 eşzamanlı indirme</option>
+              <option value="6">Yüksek · 6 eşzamanlı indirme</option>
+            </select>
+          </label>
+          <p id="downloadSpeedHelp" class="mode-hint">Kademe, aynı anda indirilen dosya veya HLS parçası sayısını belirler.</p>
+          <p id="downloadSpeedWarning" class="download-speed-warning">Hızlı toplu indirme, sitenin bağlantını kısıtlamasına veya hesabını engellemesine yol açabilir.</p>
           <label class="check">
             <input id="tryHighRes" type="checkbox" checked>
             <span>Önce yüksek çözünürlüklü/orijinal görseli dene</span>
           </label>
 
-          <label class="check">
-            <input id="overwrite" type="checkbox" checked>
-            <span>Aynı dosya adı varsa üzerine yaz</span>
-          </label>
+          <p class="mode-hint">Aynı dosya adı yeniden kullanılırsa eski dosya korunur; Chrome yeni kayda otomatik numara ekler.</p>
         </div>
       </details>
 

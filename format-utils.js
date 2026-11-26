@@ -82,12 +82,6 @@
   }
 
   function recorderMimeCandidates(outputFormat) {
-    const mp4 = [
-      'video/mp4;codecs="avc1.424028,mp4a.40.2"',
-      'video/mp4;codecs="avc1.42E01E,mp4a.40.2"',
-      "video/mp4;codecs=avc1,mp4a.40.2",
-      "video/mp4"
-    ];
     const webm = [
       "video/webm;codecs=vp9,opus",
       "video/webm;codecs=vp8,opus",
@@ -95,21 +89,36 @@
     ];
 
     const normalized = normalizeOutputFormat(outputFormat);
-    if (normalized === "mp4") {
-      return mp4;
+    if (normalized === "original") {
+      return [];
     }
-    if (normalized === "webm") {
-      return webm;
+    return webm;
+  }
+
+  function recorderBitrates(width, height) {
+    const pixels = Math.max(0, Number(width) || 0) * Math.max(0, Number(height) || 0);
+    let videoBitsPerSecond = 4_000_000;
+
+    if (pixels > 1920 * 1080) {
+      videoBitsPerSecond = 20_000_000;
+    } else if (pixels > 1280 * 720) {
+      videoBitsPerSecond = 12_000_000;
+    } else if (pixels > 640 * 480) {
+      videoBitsPerSecond = 8_000_000;
     }
-    return [...mp4, ...webm];
+
+    return {
+      videoBitsPerSecond,
+      audioBitsPerSecond: 192_000
+    };
   }
 
   function outputFormatLabel(outputFormat) {
     return {
       auto: "Otomatik · MP4 öncelikli",
       original: "Orijinal",
-      mp4: "MP4",
-      webm: "WebM"
+      mp4: "MP4 öncelikli · WebM yedek",
+      webm: "WebM · güvenli kayıt"
     }[normalizeOutputFormat(outputFormat)];
   }
 
@@ -120,6 +129,7 @@
     normalizeOutputFormat,
     orderVideoCandidates,
     outputFormatLabel,
+    recorderBitrates,
     recorderMimeCandidates,
     selectedVideoAction
   });

@@ -306,7 +306,7 @@
     }
 
     for (const video of videos) {
-      const pin = pinFromMediaElement(video, { allowStandaloneLargeImage: true });
+      const pin = pinFromVideoForScan(video, { allowStandaloneLargeImage: true });
       if (!pin) {
         continue;
       }
@@ -315,6 +315,48 @@
     }
 
     return Array.from(pins.values());
+  }
+
+  // Keep scrolling scans on the proven Personal Media Downloader path. The
+  // interactive picker still uses pinFromVideo below so URL-less videos can
+  // be selected and recorded, but bulk scanning must not depend on that
+  // conversion-specific state.
+  function pinFromVideoForScan(video, options = {}) {
+    if (!video) {
+      return null;
+    }
+
+    const anchor = video.closest('a[href*="/pin/"]');
+    const pinId = extractPinId(anchor ? anchor.href : "") || video.dataset.pinId || "";
+    const candidates = mergeCandidates(
+      extractVideoCandidates(video),
+      extractPinVideoCandidates(video, pinId)
+    ).filter((candidate) => isVideoUrl(candidate.url));
+
+    if (candidates.length === 0) {
+      return null;
+    }
+
+    const allowStandaloneLargeImage = Boolean(options.allowStandaloneLargeImage);
+    const mediaSize = Math.max(candidates[0].score || 0, video.videoWidth || 0, video.videoHeight || 0);
+    if (!anchor && (!allowStandaloneLargeImage || mediaSize < 180)) {
+      return null;
+    }
+
+    const key = pinId || canonicalImageKey(candidates[0].url);
+    if (!key) {
+      return null;
+    }
+
+    return {
+      id: key,
+      title: pinId ? `video-${pinId}` : "selected-video",
+      pinUrl: anchor ? anchor.href : "",
+      url: candidates[0].url,
+      score: candidates[0].score,
+      candidates,
+      mediaKind: "video"
+    };
   }
 
   function pinFromMediaElement(element, options = {}) {
@@ -1150,6 +1192,7 @@
 
     let downloaded = 0;
     let failed = 0;
+    let fallbackRecorded = 0;
     let finalMessage = "";
     const directPins = [];
     const outputFormat = formatTools.normalizeOutputFormat(pickState.options.outputFormat);
@@ -1195,8 +1238,11 @@
 
         const video = pickState.selectedElements.get(pin.id);
         try {
-          await recordPickedVideo(video, preparedPin, index + 1, pins.length, outputFormat);
+          const recorded = await recordPickedVideo(video, preparedPin, index + 1, pins.length, outputFormat);
           downloaded += 1;
+          if (recorded.usedFallback) {
+            fallbackRecorded += 1;
+          }
         } catch (error) {
           // A real direct URL is still preferable to losing the selection
           // completely when captureStream is blocked by the page.
@@ -1215,7 +1261,10 @@
         failed += Number(response.failed) || 0;
       }
 
-      finalMessage = `Bitti: ${downloaded}/${pins.length} indirildi. Hata: ${failed}.`;
+      const fallbackMessage = fallbackRecorded > 0
+        ? ` MP4 bulunamadigi icin ${fallbackRecorded} video guvenli WebM olarak kaydedildi.`
+        : "";
+      finalMessage = `Bitti: ${downloaded}/${pins.length} indirildi. Hata: ${failed}.${fallbackMessage}`;
     } catch (error) {
       finalMessage = `Hata: ${error && error.message ? error.message : error}`;
     } finally {
@@ -1297,10 +1346,13 @@
       }
 
       const mimeType = pickRecorderMimeType(outputFormat);
-      if (!mimeType && (outputFormat === "mp4" || outputFormat === "webm")) {
-        throw new Error(`${outputFormat.toUpperCase()} kaydi bu Chrome surumunde desteklenmiyor.`);
+      if (!mimeType) {
+        throw new Error("Bu Chrome surumu guvenli WebM kaydini desteklemiyor.");
       }
-      recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      recorder = new MediaRecorder(stream, {
+        mimeType,
+        ...formatTools.recorderBitrates(video.videoWidth, video.videoHeight)
+      });
       const chunks = [];
 
       recorder.addEventListener("dataavailable", (event) => {
@@ -1314,11 +1366,16 @@
         recorder.addEventListener("error", (event) => reject(event.error || new Error("Kayit hatasi.")), { once: true });
       });
 
-      recorder.start(1000);
+      // A single finalized Blob avoids broken MP4/WebM fragment joins. The
+      // previous one-second chunks produced reproducibly corrupted H.264.
+      recorder.start();
       await video.play();
       progressTimer = setInterval(() => {
         const percent = Math.min(100, Math.round((video.currentTime / duration) * 100));
-        updatePickToolbar(`%${percent} · Video ${current}/${total} ${formatTools.outputFormatLabel(outputFormat)} bicimine donusturuluyor`);
+        const recordingLabel = outputFormat === "mp4"
+          ? "MP4 kaynagi bulunamadi; guvenli WebM olarak kaydediliyor"
+          : `${formatTools.outputFormatLabel(outputFormat)} bicimine donusturuluyor`;
+        updatePickToolbar(`%${percent} · Video ${current}/${total} ${recordingLabel}`);
       }, 500);
 
       await waitForMediaEvent(video, "ended", Math.ceil((duration + 30) * 1000));
@@ -1332,8 +1389,8 @@
       if (!actualFormat) {
         throw new Error("Tarayicinin olusturdugu video bicimi belirlenemedi.");
       }
-      if ((outputFormat === "mp4" || outputFormat === "webm") && actualFormat !== outputFormat) {
-        throw new Error(`Tarayici ${outputFormat.toUpperCase()} yerine ${actualFormat.toUpperCase()} olusturdu.`);
+      if (actualFormat !== "webm") {
+        throw new Error(`Guvenli kayit WebM yerine ${actualFormat.toUpperCase()} olusturdu.`);
       }
       const blob = new Blob(chunks, { type: actualMimeType });
       if (blob.size === 0) {
@@ -1341,6 +1398,10 @@
       }
 
       await downloadRecordedBlob(blob, pin, current, actualFormat, actualMimeType);
+      return {
+        actualFormat,
+        usedFallback: outputFormat === "mp4" && actualFormat === "webm"
+      };
     } finally {
       clearInterval(progressTimer);
       if (recorder && recorder.state !== "inactive") {
@@ -1404,18 +1465,24 @@
 
   async function downloadRecordedBlob(blob, pin, index, actualFormat, mimeType) {
     const url = URL.createObjectURL(blob);
+    const number = String(index).padStart(4, "0");
     const safeTitle = String(pin.title || `selected-video-${index}`)
       .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "-")
       .replace(/\s+/g, " ")
       .trim()
-      .slice(0, 80) || `selected-video-${index}`;
+      .slice(0, 58) || `selected-video-${index}`;
+    const safeId = String(pin.id || "clip")
+      .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "-")
+      .replace(/\s+/g, "-")
+      .trim()
+      .slice(-24) || "clip";
 
     try {
       await new Promise((resolve, reject) => {
         chrome.runtime.sendMessage({
           type: "PIN_DOWNLOADER_DOWNLOAD_RECORDED_BLOB",
           url,
-          filename: `${safeTitle}.${actualFormat}`,
+          filename: `${number}_${safeTitle}_${safeId}.${actualFormat}`,
           mimeType,
           boardName: pickState.options.boardName || detectBoardName() || "Selected Videos",
           options: pickState.options

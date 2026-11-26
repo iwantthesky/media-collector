@@ -9,6 +9,7 @@ const RECORDED_BLOB_MESSAGE = "PIN_DOWNLOADER_DOWNLOAD_RECORDED_BLOB";
 const DOWNLOAD_PROGRESS_MESSAGE = "PIN_DOWNLOADER_DOWNLOAD_PROGRESS";
 const BATCH_PROGRESS_MESSAGE = "PIN_DOWNLOADER_BATCH_PROGRESS";
 const PINIMG_HOST = "pinimg.com";
+const MEDIA_CONFLICT_ACTION = "uniquify";
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (!message || ![
@@ -42,7 +43,10 @@ async function downloadRecordedBlob(message) {
   if (!/^(mp4|webm)$/.test(recordedFormat)) {
     throw new Error("Kaydedilen videonun gercek bicimi belirlenemedi.");
   }
-  if ((requestedFormat === "mp4" || requestedFormat === "webm") && recordedFormat !== requestedFormat) {
+  if (recordedFormat === "mp4") {
+    throw new Error("Chrome gercek zamanli MP4 kaydi bozuk kare uretebildigi icin devre disi. Dogrudan MP4 veya WebM kullan.");
+  }
+  if (requestedFormat === "webm" && recordedFormat !== requestedFormat) {
     throw new Error(`Istenen ${requestedFormat.toUpperCase()} bicimi tarayicida olusturulamadi.`);
   }
   const rootFolder = sanitizePathPart(options.rootFolder || "MediaCollector", "MediaCollector");
@@ -54,11 +58,17 @@ async function downloadRecordedBlob(message) {
   await chromeDownloadAwaitComplete({
     url,
     filename,
-    conflictAction: options.overwrite ? "overwrite" : "uniquify",
+    conflictAction: MEDIA_CONFLICT_ACTION,
     saveAs: false
   });
 
-  return { downloaded: 1, failed: 0, total: 1, filename };
+  return {
+    downloaded: 1,
+    failed: 0,
+    total: 1,
+    filename,
+    usedFallback: requestedFormat === "mp4" && recordedFormat === "webm"
+  };
 }
 
 async function downloadPins(message) {
@@ -77,7 +87,7 @@ async function downloadDirectUrls(message) {
   const options = message.options || {};
   const rootFolder = sanitizePathPart(options.rootFolder || "MediaCollector", "MediaCollector");
   const boardName = sanitizePathPart(message.boardName || options.boardName || "Direct Media", "Direct Media");
-  const conflictAction = options.overwrite ? "overwrite" : "uniquify";
+  const conflictAction = MEDIA_CONFLICT_ACTION;
   const failures = [];
 
   let downloaded = 0;
@@ -132,7 +142,7 @@ async function downloadPinsForBoard({ pins, boardName, options }) {
   const safeOptions = options || {};
   const rootFolder = sanitizePathPart(safeOptions.rootFolder || "MediaCollector", "MediaCollector");
   const safeBoardName = sanitizePathPart(boardName || safeOptions.boardName || "Media", "Media");
-  const conflictAction = safeOptions.overwrite ? "overwrite" : "uniquify";
+  const conflictAction = MEDIA_CONFLICT_ACTION;
   const tryHighRes = Boolean(safeOptions.tryHighRes);
   const outputFormat = formatTools.normalizeOutputFormat(safeOptions.outputFormat);
 
@@ -205,6 +215,9 @@ async function downloadFirstAvailable(urls, downloadOne) {
       return { ok: true, url, error: null };
     } catch (error) {
       lastError = error;
+      if (["SERVER_FORBIDDEN", "SERVER_UNAUTHORIZED"].includes(error?.code)) {
+        break;
+      }
     }
   }
   return { ok: false, url: lastUrl, error: lastError };
@@ -738,6 +751,23 @@ function handleMediaRequest(details) {
   }
 }
 
+function handlePlaylistResponse(details) {
+  if (!captureEnabledTabs.has(details.tabId) || details.method !== "GET" ||
+      details.type === "main_frame" || details.statusCode !== 200) {
+    return;
+  }
+  const contentType = (details.responseHeaders || [])
+    .find(header => header.name.toLowerCase() === "content-type")?.value
+    ?.split(";")[0].trim().toLowerCase();
+  if (!/^(?:(?:application|audio|video)\/(?:vnd\.apple\.|x-)?mpegurl|application\/dash\+xml)$/.test(contentType || "")) {
+    return;
+  }
+  const kind = classifyNetworkMedia(details.url, details.type, contentType);
+  if (kind === "hls" || kind === "dash") {
+    recordCapturedMedia(details.tabId, details.url, kind);
+  }
+}
+
 function syncCaptureListener() {
   const event = chrome.webRequest.onBeforeRequest;
   const listening = event.hasListener(handleMediaRequest);
@@ -745,6 +775,12 @@ function syncCaptureListener() {
     event.addListener(handleMediaRequest, { urls: ["<all_urls>"] });
   } else if (captureEnabledTabs.size === 0 && listening) {
     event.removeListener(handleMediaRequest);
+  }
+  const headers = chrome.webRequest.onHeadersReceived;
+  if (captureEnabledTabs.size > 0 && !headers.hasListener(handlePlaylistResponse)) {
+    headers.addListener(handlePlaylistResponse, { urls: ["http://*/*", "https://*/*"] }, ["responseHeaders"]);
+  } else if (captureEnabledTabs.size === 0 && headers.hasListener(handlePlaylistResponse)) {
+    headers.removeListener(handlePlaylistResponse);
   }
 }
 
@@ -803,10 +839,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return false;
   }
 
-  if (message.type === "PIN_DOWNLOADER_HLS_DIAG") {
-    return false;
-  }
-
   if (message.type === "PIN_DOWNLOADER_DOWNLOAD_HLS") {
     enqueueHlsDownload(message) // SIRA: eski hali "downloadHlsStream(message)"
       .then((result) => sendResponse({ ok: true, ...result }))
@@ -819,20 +851,21 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   return false;
 });
 
-function classifyNetworkMedia(rawUrl, resourceType) {
+function classifyNetworkMedia(rawUrl, resourceType, contentType = "") {
   let pathname = "";
   try {
     const parsed = new URL(rawUrl);
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return "";
     if (parsed.hostname === "googlevideo.com" || parsed.hostname.endsWith(".googlevideo.com")) return "youtube";
     pathname = parsed.pathname.toLowerCase();
   } catch {
     return "";
   }
 
-  if (/\.m3u8$/.test(pathname)) {
+  if (/^(?:application|audio|video)\/(?:vnd\.apple\.|x-)?mpegurl$/.test(contentType) || /\.m3u8$/.test(pathname)) {
     return "hls";
   }
-  if (/\.mpd$/.test(pathname)) {
+  if (contentType === "application/dash+xml" || /\.mpd$/.test(pathname)) {
     return "dash";
   }
   if (/\.(mp4|m4v|mov|webm|ogv|mkv|flv)$/.test(pathname)) {
@@ -863,7 +896,12 @@ function recordCapturedMedia(tabId, url, kind) {
       const stored = await chrome.storage.session.get(key);
       const list = Array.isArray(stored[key]) ? stored[key] : [];
 
-      if (list.some((item) => item.url === url)) {
+      const existing = list.find(item => item.url === url);
+      if (existing) {
+        if (existing.kind !== kind && (kind === "hls" || kind === "dash")) {
+          existing.kind = kind;
+          await chrome.storage.session.set({ [key]: list });
+        }
         return;
       }
       if (list.length >= 120) {
@@ -913,6 +951,7 @@ async function getCapturedMedia(tabId) {
   }
 
   const key = capturedKey(tabId);
+  await captureWriteQueue;
   const stored = await chrome.storage.session.get(key);
   return Array.isArray(stored[key]) ? stored[key] : [];
 }
@@ -1228,7 +1267,7 @@ async function downloadHlsStream(message) {
   const options = message.options || {};
   const rootFolder = sanitizePathPart(options.rootFolder || "MediaCollector", "MediaCollector");
   const boardName = sanitizePathPart(message.boardName || options.boardName || "Videos", "Videos");
-  const conflictAction = options.overwrite ? "overwrite" : "uniquify";
+  const conflictAction = MEDIA_CONFLICT_ACTION;
 
 
   await applyHlsReferer(url, message.pageUrl);
@@ -1241,7 +1280,8 @@ async function downloadHlsStream(message) {
     try {
       assembled = await sendRuntimeMessageAsync({
         type: "OFFSCREEN_DOWNLOAD_HLS",
-        url
+        url,
+        concurrency: normalizeDownloadConcurrency(options.downloadConcurrency)
       });
     } catch (error) {
       throw new Error(`Offscreen calisaniyla haberlesilemedi: ${error && error.message ? error.message : error}`);
@@ -1444,7 +1484,7 @@ function chromeDownloadAwaitComplete(options, timeoutMs = 10 * 60 * 1000) {
         if (delta.state.current === "complete") {
           settle(resolve, downloadId);
         } else if (delta.state.current === "interrupted") {
-          settle(reject, new Error("İndirme Chrome tarafından yarıda kesildi."));
+          settle(reject, downloadInterruptedError(delta.error?.current));
         }
       }
 
@@ -1460,16 +1500,27 @@ function chromeDownloadAwaitComplete(options, timeoutMs = 10 * 60 * 1000) {
         if (item.state === "complete") {
           settle(resolve, downloadId);
         } else if (item.state === "interrupted") {
-          settle(reject, new Error("İndirme Chrome tarafından yarıda kesildi."));
+          settle(reject, downloadInterruptedError(item.error));
         }
       });
     });
   });
 }
 
-async function runDownloadPool(items, requested, task) {
+function downloadInterruptedError(code) {
+  const message = ["SERVER_FORBIDDEN", "SERVER_UNAUTHORIZED"].includes(code)
+    ? "Sunucu bu dosya için erişimi reddetti."
+    : "İndirme Chrome tarafından yarıda kesildi.";
+  return Object.assign(new Error(message), { code });
+}
+
+function normalizeDownloadConcurrency(requested) {
   const n = Number(requested);
-  const size = Number.isFinite(n) ? Math.max(1, Math.min(6, Math.floor(n))) : 3;
+  return Number.isFinite(n) && requested !== null && requested !== "" ? Math.max(1, Math.min(6, Math.floor(n))) : 3;
+}
+
+async function runDownloadPool(items, requested, task) {
+  const size = normalizeDownloadConcurrency(requested);
   let cursor = 0;
   await Promise.all(Array.from({length: Math.min(size, items.length)}, async () => {
     while (cursor < items.length) { const index = cursor++; await task(items[index], index); }

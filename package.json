@@ -1,6 +1,6 @@
 {
   "name": "media-collector-extension",
-  "version": "0.5.1",
+  "version": "0.5.4",
   "private": true,
   "description": "Local-first Chrome MV3 media utility.",
   "scripts": {
